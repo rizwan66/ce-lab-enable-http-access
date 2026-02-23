@@ -1,62 +1,62 @@
-# Lab M2.04 - Enable HTTP Access and Configure Web Server
+# Lab M2: HTTP Access - EC2 Web Application
 
-**Repository:** [https://github.com/cloud-engineering-bootcamp/ce-lab-enable-http-access](https://github.com/cloud-engineering-bootcamp/ce-lab-enable-http-access)
+## Public IP and Test URL
+- **Public IP:** 50.17.205.23
+- **Test URL:** http://50.17.205.23
+- **Instance:** i-0214d1cc1fc7a0ff9 (nodejs-app-1a)
+- **Private IP:** 10.0.11.112
 
-**Activity Type:** Individual  
-**Estimated Time:** 30-45 minutes
+## Security Group ID and Rules
+- **Security Group:** app-tier-sg (sg-0b33c7eb3eb59da41)
+- **Inbound Rules:**
+  - HTTP (TCP port 80) from 0.0.0.0/0 (Anywhere IPv4)
+  - SSH (TCP port 22) from existing rules
 
-## Learning Objectives
+## Step-by-Step Process
 
-- [ ] Configure security groups to allow HTTP traffic
-- [ ] Set up Nginx as a reverse proxy
-- [ ] Test traffic flow from internet to application
-- [ ] Implement HTTP to HTTPS redirection
-- [ ] Verify proper configuration
+### 1. Start EC2 Instance
+- Navigated to EC2 console (us-east-1)
+- Found instance `nodejs-app-1a` (i-0214d1cc1fc7a0ff9) in stopped state
+- Started the instance via Instance State > Start instance
 
-## Your Task
+### 2. Configure Security Group
+- Identified security group `app-tier-sg` (sg-0b33c7eb3eb59da41) from instance Security tab
+- Navigated to security group and clicked "Edit inbound rules"
+- The existing HTTP rule had source set to a load balancer security group (sg-0a9ada4856d63eeac)
+- Deleted the existing HTTP rule (could not change from SG reference to CIDR in place)
+- Added new rule: Type=HTTP, Port=80, Source=0.0.0.0/0 (Anywhere-IPv4)
+- Saved rules successfully
 
-Configure your EC2 instance to serve a web application publicly:
-1. Allow HTTP traffic through security group
-2. Install and configure Nginx
-3. Deploy a simple Node.js application
-4. Configure Nginx to proxy requests
-5. Test from internet
+### 3. Fix Networking (NAT Gateway Issue)
+- Instance is in private subnet `app-subnet-1a` (subnet-042c0fb602895edd5)
+- Discovered NAT gateway (nat-0b49534b9038efd6d) had been deleted - showing Blackhole in route table
+- Updated route table `private-rt-1a` (rtb-053910c29016d0af0):
+  - Changed 0.0.0.0/0 target from deleted NAT Gateway to Internet Gateway (igw-05c32967b5450e184)
+- Allocated Elastic IP: 50.17.205.23
+- Associated Elastic IP with instance i-0214d1cc1fc7a0ff9
 
-**Success:** Public URL serving your application
+### 4. Connect to Instance
+- Used EC2 Instance Connect via private IP with endpoint eice-0a1e274e6db079000
+- Connected as ec2-user to 10.0.11.112
 
-## Quick Start
-
+### 5. Install Nginx
 ```bash
-# 1. Update security group - add HTTP (80) from 0.0.0.0/0
-
-# 2. Install Nginx
+sudo amazon-linux-extras install -y nginx1
 sudo yum install -y nginx
+```
+Note: Standard `yum install nginx` fails on Amazon Linux 2; must use amazon-linux-extras first.
 
-# 3. Create simple app
+### 6. Create Node.js Application
+```bash
 mkdir ~/app && cd ~/app
 npm init -y
 npm install express
+```
+Created `index.js` with Express app listening on port 8080.
 
-cat > index.js <<'EOF'
-const express = require('express');
-const app = express();
-
-app.get('/', (req, res) => {
-  res.send(`
-    <h1>Hello from ${process.env.HOSTNAME}!</h1>
-    <p>You've successfully configured HTTP access</p>
-  `);
-});
-
-app.listen(8080, () => {
-  console.log('App running on port 8080');
-});
-EOF
-
-node index.js &
-
-# 4. Configure Nginx proxy
-sudo tee /etc/nginx/conf.d/app.conf <<EOF
+### 7. Configure Nginx Reverse Proxy
+```bash
+sudo tee /etc/nginx/conf.d/app.conf << EOF
 server {
     listen 80;
     location / {
@@ -64,59 +64,55 @@ server {
     }
 }
 EOF
+```
 
+### 8. Start Services
+```bash
+node index.js &
 sudo systemctl start nginx
-
-# 5. Test
-curl http://$(curl -s ifconfig.me)
+sudo systemctl enable nginx
 ```
 
-## 📤 What to Submit
-
-**Submission Type:** File Upload (ZIP)
-
-Create a ZIP file named `lab-m2-http-access.zip` containing:
-
-1. **Nginx Configuration Files:**
-   - `/etc/nginx/conf.d/app.conf` (your proxy configuration)
-   - `/etc/nginx/nginx.conf` (if modified)
-
-2. **Application Files:**
-   - `index.js` (your Node.js application)
-   - `package.json`
-
-3. **Screenshots** (in `screenshots/` folder):
-   - Security group rules showing HTTP port 80 configuration
-   - Browser showing your working webpage with public IP
-   - Terminal showing Nginx and app running (`systemctl status nginx`)
-   - `curl` output testing the connection
-
-4. **Documentation** (`README.md`):
-   - Step-by-step process you followed
-   - Your public IP address and test URL
-   - Security group ID and rules
-   - Any troubleshooting you encountered
-   - Reflection: Why use Nginx as a reverse proxy?
-
-**File Structure:**
+### 9. Test
+```bash
+curl http://localhost          # Local test - SUCCESS
+curl http://50.17.205.23      # Public IP test - SUCCESS
 ```
-lab-m2-http-access.zip
-├── README.md
-├── configs/
-│   ├── app.conf
-│   └── nginx.conf (if modified)
-├── application/
-│   ├── index.js
-│   └── package.json
-└── screenshots/
-    ├── 01-security-group-http-rule.png
-    ├── 02-browser-working-webpage.png
-    ├── 03-services-running.png
-    └── 04-curl-test.png
-```
+Also verified in browser: http://50.17.205.23
 
-## Grading: 100 points
-- Security group configuration: 25pts
-- Nginx reverse proxy setup: 25pts
-- Application working publicly: 30pts
-- Documentation quality: 20pts
+## Troubleshooting
+
+### Issue 1: Security Group Rule Error
+**Problem:** "You may not specify an IPv4 CIDR for an existing referenced group id rule"
+**Fix:** Delete the existing SG-reference-based HTTP rule and create a fresh rule with CIDR 0.0.0.0/0
+
+### Issue 2: No Internet Access on Instance
+**Problem:** `curl` to external URLs timed out; `sudo yum install nginx` failed
+**Root Cause:** NAT Gateway was deleted, leaving a Blackhole route in the route table
+**Fix:** Updated route table to use Internet Gateway instead of NAT Gateway; allocated and associated Elastic IP
+
+### Issue 3: Nginx Not in Standard Repos
+**Problem:** `sudo yum install -y nginx` returned "No package nginx available"
+**Fix:** Used `sudo amazon-linux-extras install -y nginx1` to enable nginx from Amazon Linux Extras
+
+### Issue 4: Bash History Expansion
+**Problem:** Commands with `!` in strings caused bash history expansion errors
+**Fix:** Removed `!` characters or used single quotes to prevent expansion
+
+## Reflection: Why Use Nginx as a Reverse Proxy?
+
+Nginx serves as a reverse proxy in front of the Node.js application for several important reasons:
+
+1. **Port Abstraction:** Node.js runs on port 8080 (non-privileged port, no root needed), while Nginx listens on port 80 (standard HTTP). Nginx bridges the gap, so users access the standard port.
+
+2. **Security:** The Node.js app is not directly exposed to the internet. Nginx acts as a buffer, hiding implementation details and providing a layer of protection.
+
+3. **Performance:** Nginx is highly optimized for handling concurrent connections and serving static files efficiently. It can handle thousands of connections with minimal memory, offloading this work from Node.js.
+
+4. **SSL Termination:** Nginx can handle HTTPS/TLS, decrypting traffic before passing plain HTTP to the backend - simplifying the Node.js app.
+
+5. **Load Balancing:** Nginx can distribute traffic across multiple Node.js instances, enabling horizontal scaling.
+
+6. **Request Buffering:** Nginx buffers slow client requests and sends complete requests to Node.js, preventing slow clients from blocking the event loop.
+
+7. **Logging and Monitoring:** Centralized access logs and error handling at the proxy layer.
